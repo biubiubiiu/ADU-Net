@@ -25,9 +25,7 @@ class Fusion(nn.Module):
         self.attention = SimChannelAttention(2 * channels, channels)
 
     def forward(self, x, y):
-        # assume y is smaller
-        y = F.interpolate(y, size=x.size()[2:], mode='bilinear', align_corners=True)
-        out = F.relu(self.refine(torch.cat([x, y], dim=1)) + y, inplace=True)
+        out = F.relu(self.refine(torch.cat([x, y], dim=1)) + x, inplace=True)
         out = (1 + self.attention(torch.cat([x, y], dim=1))) * out
         return out
 
@@ -72,51 +70,105 @@ class MultiDilatedMemBlock(nn.Module):
         return x
 
 
+class DownBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, down_factor):
+        super().__init__()
+
+        in_channels = in_channels * down_factor**2
+
+        if in_channels < 512:
+            self.conv = nn.Conv2d(in_channels, out_channels, 3, 1, 1)
+        else:
+            mid_channels = out_channels * 2
+            self.conv = nn.Sequential(
+                nn.Conv2d(in_channels, mid_channels, 3, 1, 1, groups=mid_channels),
+                nn.Conv2d(mid_channels, out_channels, 3, 1, 1),
+            )
+
+        self.act = nn.LeakyReLU(0.2, inplace=True)
+        self.down = nn.PixelUnshuffle(down_factor)
+
+    def forward(self, x):
+        return self.act(self.conv(self.down(x)))
+
+
+class UpBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, n_blocks, up_factor):
+        super().__init__()
+
+        self.trasform = MultiDilatedMemBlock(in_channels, n_blocks)
+        self.up = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, 1, 1),
+            nn.UpsamplingBilinear2d(scale_factor=up_factor),
+        )
+        self.fusion = Fusion(out_channels)
+
+    def forward(self, x, y):
+        x = self.trasform(x)
+        out = self.fusion(self.up(x), y)
+        return out
+
+
 class LLIE(nn.Module):
+
+    in_channels = 4
+    out_channels = 3
+    mid_channels = (12, 32, 64)
+    n_blocks = (5, 3)
+    scale_factor = 4
+
     def __init__(self):
 
         super(LLIE, self).__init__()
 
-        self.conv1x = nn.Sequential(
-            nn.Conv2d(4, 12, kernel_size=3, stride=1, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
+        # Initial projection
+        self.conv0 = nn.Conv2d(self.in_channels, self.mid_channels[0], 3, 1, 1)
+
+        # Downsample
+        self.downs = nn.ModuleList(
+            [
+                DownBlock(
+                    in_channels=self.mid_channels[i],
+                    out_channels=self.mid_channels[i + 1],
+                    down_factor=self.scale_factor,
+                )
+                for i in range(len(self.mid_channels) - 1)
+            ]
         )
-        self.conv4x = nn.Sequential(
-            nn.Conv2d(192, 32, kernel_size=3, stride=1, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
+
+        # Upsample
+        self.ups = nn.ModuleList(
+            [
+                UpBlock(
+                    in_channels=self.mid_channels[-i - 1],
+                    out_channels=self.mid_channels[-i - 2],
+                    n_blocks=self.n_blocks[i],
+                    up_factor=self.scale_factor,
+                )
+                for i in range(len(self.mid_channels) - 1)
+            ]
         )
-        self.conv16x = nn.Sequential(
-            nn.Conv2d(512, 128, 3, stride=1, padding=1, groups=128),
-            nn.Conv2d(128, 64, 3, stride=1, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
+
+        self.out = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(self.mid_channels[0], self.out_channels * 4, kernel_size=3),
+            nn.PixelShuffle(upscale_factor=2),
         )
 
-        self.res1x = nn.Conv2d(
-            12, 12, kernel_size=3, stride=1, padding=1, padding_mode='reflect'
-        )
-        self.res4x = MultiDilatedMemBlock(32, num_blocks=3)
-        self.res16x = MultiDilatedMemBlock(64, num_blocks=5)
+    def forward(self, x):
+        x = F.leaky_relu(self.conv0(x), 0.2, inplace=True)
 
-        self.up16x4 = nn.Conv2d(64, 32, 3, 1, 1)
-        self.up4x1 = nn.Conv2d(32, 12, 3, 1, 1)
+        feats = [x]
+        for down in self.downs:
+            x = down(x)
+            feats.append(x)
 
-        self.fusion16x4 = Fusion(32)
-        self.fusion4x1 = Fusion(12)
+        x = feats.pop()
+        for up in self.ups:
+            enc_feat = feats.pop()
+            x = up(x, enc_feat)
 
-    def forward(self, raw):
-        feat1x = self.conv1x(raw)
-        feat4x = self.conv4x(F.pixel_unshuffle(feat1x, 4))  # 32 channels
-        feat16x = self.conv16x(F.pixel_unshuffle(feat4x, 4))  # 64 channels
-
-        feat16x = self.res16x(feat16x)
-
-        feat4x = self.fusion16x4(feat4x, self.up16x4(feat16x))
-        feat4x = self.res4x(feat4x)
-
-        feat1x = self.fusion4x1(feat1x, self.up4x1(feat4x))
-        out = self.res1x(feat1x)
-
-        out = F.pixel_shuffle(out, 2)
+        out = self.out(x)
         out = torch.clamp(out, min=0.0, max=1.0)
         return out
 

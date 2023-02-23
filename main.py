@@ -1,10 +1,9 @@
-# from model import LLIE
-import importlib
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from model import LLIE
 from PIL import Image
 from pytorch_msssim import MS_SSIM
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr
@@ -13,8 +12,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
-from utils import AverageMeter, SIDDataset, parse_args, init_weights
+from utils import AverageMeter, SIDDataset, parse_args
 
 
 def evaluate_model(net, data_loader, save_dir, num_epoch=None):
@@ -24,12 +22,9 @@ def evaluate_model(net, data_loader, save_dir, num_epoch=None):
     with torch.inference_mode():
         test_bar = tqdm(data_loader, initial=1, dynamic_ncols=True)
         for data in test_bar:
-            # NOTE: avoid CUDA OOM
             lq, gt, fn = (
-                # data['input'].to(device),
-                # data['target'].to(device),
-                data['input'].cpu(),
-                data['target'].cpu(),
+                data['input'].to(device),
+                data['target'].to(device),
                 data['fn'][0],
             )
 
@@ -76,8 +71,7 @@ if __name__ == '__main__':
         'Sony_test.txt',
         augment=False,
         pad_multiple_to=args.pad_multiple_to,
-        # memorize=args.memorize,
-        memorize=False,
+        memorize=args.memorize,
     )
     test_loader = DataLoader(
         test_dataset,
@@ -87,19 +81,9 @@ if __name__ == '__main__':
         pin_memory=True,
     )
 
-    module_name = (
-        'models.' + args.model_name if args.model_name is not None else 'model'
-    )
-    module = importlib.import_module(module_name)
-    model = module.LLIE().to(device)
-
-    init_weights(model)
-
-    # NOTE: first step to avoid CUDA OOM, store another model in cpu
-    model_cpu = module.LLIE().cpu()  #
-
     save_path = Path(args.save_path)
 
+    model = LLIE().to(device)
     if args.phase == 'test':
         model.load_state_dict(torch.load(args.ckpt, map_location=device))
         evaluate_model(model, test_loader, save_path, 'final')
@@ -122,10 +106,6 @@ if __name__ == '__main__':
             num_workers=args.workers,
             pin_memory=True,
         )
-
-        if args.ckpt is not None:
-            print(f'Resume training from {args.ckpt}')
-            model.load_state_dict(torch.load(args.ckpt, map_location=device))
 
         for n_epoch in range(1, args.num_epoch + 1):
             train_bar = tqdm(train_loader, dynamic_ncols=True)
@@ -150,15 +130,9 @@ if __name__ == '__main__':
             if (
                 n_epoch >= args.eval_begin_from and n_epoch % args.eval_step == 0
             ):  # evaluate
-                # NOTE: second step to avoid CUDA OOM, sync model
-                state_dict = model.state_dict()
-                model_cpu.load_state_dict({k: v.cpu() for k, v in state_dict.items()})
                 val_psnr, val_ssim = evaluate_model(
-                    model_cpu, test_loader, save_path, n_epoch
+                    model, test_loader, save_path, n_epoch
                 )
-                # val_psnr, val_ssim = evaluate_model(
-                #     model, test_loader, save_path, n_epoch
-                # )
 
                 # save statistics
                 with save_path.joinpath('record.txt').open(mode='a+') as f:
