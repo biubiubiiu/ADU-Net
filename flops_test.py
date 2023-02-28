@@ -39,7 +39,7 @@ net = module.LLIE().to(device)
 net.eval()
 
 # calculate macs and params
-input_shape = (1, 1, 256, 256)
+input_shape = (1, 4, 128, 128)  # <- [1, 1, 256, 256]
 s = summary(net, input_shape, col_names=['num_params', 'mult_adds'], depth=4, verbose=0)
 with open(f'summary-{args.model}.txt', 'w', encoding='utf-8') as f:
     f.write(str(s))

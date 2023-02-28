@@ -8,7 +8,6 @@ import numpy as np
 import rawpy
 import torch
 import torchvision.transforms.functional as T
-from torch import nn
 from torch.backends import cudnn
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -16,9 +15,6 @@ from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Lightweight LLIE')
-    parser.add_argument(
-        '--model_name', type=str, required=False
-    )  # TODO: remove this line when model is stable
     parser.add_argument(
         '--data_path',
         type=str,
@@ -61,9 +57,7 @@ def parse_args():
     )
     parser.add_argument('--cpu', action='store_true')
     parser.add_argument('--eval_step', type=int, default=200)
-    parser.add_argument(
-        '--eval_begin_from', type=int, default=1600
-    )  # TODO: remove this line
+    parser.add_argument('--eval_begin_from', type=int, default=1600)
     parser.add_argument('--save_step', type=int, default=200)
     parser.add_argument('--phase', choices=['train', 'test'], default='train')
     parser.add_argument('--ckpt', type=str, default=None, help='path to checkpoint')
@@ -77,7 +71,6 @@ def init_args(args):
 
     os.makedirs(args.save_path, exist_ok=True)
     os.makedirs(osp.join(args.save_path, 'checkpoints'), exist_ok=True)
-    # os.makedirs(osp.join(args.save_path, 'val_result'), exist_ok=True)
 
     if args.seed >= 0:
         random.seed(args.seed)
@@ -88,15 +81,6 @@ def init_args(args):
         cudnn.benchmark = False
 
     return args
-
-
-def pad_image_needed(img, size):
-    width, height = T.get_image_size(img)
-    if width < size[1]:
-        img = T.pad(img, [size[1] - width, 0], padding_mode='reflect')
-    if height < size[0]:
-        img = T.pad(img, [0, size[0] - height], padding_mode='reflect')
-    return img
 
 
 def read_paired_fns(filename):
@@ -135,9 +119,7 @@ def pack_raw_bayer(raw):
         axis=0,
     ).astype(np.float32)
 
-    black_level = np.array(raw.black_level_per_channel)[:, None, None].astype(
-        np.float32
-    )
+    black_level = np.float32(raw.black_level_per_channel)[..., np.newaxis, np.newaxis]
 
     out = (out - black_level) / (white_point - black_level)
     out = np.clip(out, 0, 1)
@@ -196,9 +178,6 @@ class SIDDataset(Dataset):
                     target_image = np.float32(target_image / 65535.0)
                     target_image = np.transpose(target_image, (2, 0, 1))
                     self.target_dict[target_fn] = target_image
-                # target_image = np.float32(Image.open(target_path)) / 255.0
-                # target_image = np.transpose(target_image, (2, 0, 1))
-                # self.target_dict[target_fn] = target_image
 
             if input_fn not in self.input_dict:
                 with rawpy.imread(input_path) as raw_input:
@@ -218,9 +197,6 @@ class SIDDataset(Dataset):
                 )
                 target_image = np.float32(target_image / 65535.0)
                 target_image = np.transpose(target_image, (2, 0, 1))
-            # target_image = np.float32(Image.open(target_path)) / 255.0
-            # target_image = np.transpose(target_image, (2, 0, 1))
-            # self.target_dict[target_fn] = target_image
 
             with rawpy.imread(input_path) as raw_input:
                 ratio = compute_expo_ratio(input_fn, target_fn)
@@ -254,11 +230,9 @@ class SIDDataset(Dataset):
             pad_h = new_h - H if H % pad_multiple_to != 0 else 0
             pad_w = new_w - W if W % pad_multiple_to != 0 else 0
             input = np.pad(input_image, ((0, 0), (0, pad_h), (0, pad_w)), 'reflect')
-            # input = input_image
             target = target_image
 
-        input = np.maximum(np.minimum(input, 1.0), 0)
-        # input = input.copy()
+        input = np.clip(input, 0.0, 1.0)
         target = target.copy()
 
         dic = {'input': input, 'target': target, 'fn': osp.splitext(input_fn)[0]}
@@ -267,14 +241,6 @@ class SIDDataset(Dataset):
 
     def __len__(self):
         return len(self.paired_fns) * self.repeat
-
-
-def init_weights(net):
-    for m in net.modules():
-        if isinstance(m, nn.Conv2d):
-            nn.init.xavier_uniform_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
 
 
 class AverageMeter(object):
