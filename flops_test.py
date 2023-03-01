@@ -5,17 +5,16 @@
 '''
 
 import argparse
-import importlib
 import time
 
 import numpy as np
 import rawpy
 import torch
+from model import LLIE
 from torchinfo import summary
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--repeat', type=int, default=50, help='number of repeats')
 parser.add_argument('--cpu', action='store_true')
 parser.add_argument('--no_benchmark', action='store_true', help='no cudnn benchmarking')
@@ -33,15 +32,13 @@ else:
     use_gpu = False
     print('Using CPU')
 
-module_name = 'models.' + args.model if args.model is not None else 'model'
-module = importlib.import_module(module_name)
-net = module.LLIE().to(device)
+net = LLIE().to(device)
 net.eval()
 
 # calculate macs and params
 input_shape = (1, 4, 128, 128)  # <- [1, 1, 256, 256]
 s = summary(net, input_shape, col_names=['num_params', 'mult_adds'], depth=4, verbose=0)
-with open(f'summary-{args.model}.txt', 'w', encoding='utf-8') as f:
+with open(f'summary.txt', 'w', encoding='utf-8') as f:
     f.write(str(s))
 
 
