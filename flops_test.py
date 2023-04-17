@@ -10,8 +10,9 @@ import time
 import numpy as np
 import rawpy
 import torch
+import torch.nn.functional as F
+from fvcore.nn import FlopCountAnalysis, flop_count_table
 from model import LLIE
-from torchinfo import summary
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
@@ -37,19 +38,20 @@ net.eval()
 
 # calculate macs and params
 input_shape = (1, 4, 128, 128)  # <- [1, 1, 256, 256]
-s = summary(net, input_shape, col_names=['num_params', 'mult_adds'], depth=4, verbose=0)
+input = torch.randn(input_shape)
+flops = FlopCountAnalysis(net, input)
 with open(f'summary.txt', 'w', encoding='utf-8') as f:
-    f.write(str(s))
-
+    f.write(flop_count_table(flops))
 
 path = '/data/SID/Sony/long/00001_00_10s.ARW'
 with rawpy.imread(path) as raw:
     arr = raw.raw_image_visible.copy()
 
 arr = arr.astype(np.float32)
-arr = np.maximum(arr - 512, 0) / (16383 - 512)  # subtract the black level and normalize
+arr = np.maximum(arr - 512, 0) / (16383 - 512)
 arr = np.expand_dims(arr, axis=tuple(range(4 - arr.ndim)))
 tensor = torch.from_numpy(arr).to(device)
+tensor = F.pixel_unshuffle(tensor, 2)  # simulate packing
 
 total_time = 0
 pbar = tqdm(range(args.repeat))

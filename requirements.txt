@@ -4,3 +4,4 @@ tqdm
 numpy
 Pillow
 rawpy
+fvcore
