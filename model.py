@@ -111,48 +111,37 @@ class UpBlock(nn.Module):
 
 class LLIE(nn.Module):
 
-    in_channels = 4
-    out_channels = 3
-    mid_channels = (12, 32, 64)
-    n_blocks = (5, 3)
-    scale_factor = 4
-
-    def __init__(self):
-
+    def __init__(self, cfa_size=2, out_channels=3, mid_channels=(12, 32, 64), n_blocks=(5, 3), scale_factor=4):
         super(LLIE, self).__init__()
 
         # Initial projection
-        self.conv0 = nn.Conv2d(self.in_channels, self.mid_channels[0], 3, 1, 1)
+        self.conv0 = nn.Conv2d(cfa_size ** 2, mid_channels[0], 3, 1, 1)
 
         # Downsample
-        self.downs = nn.ModuleList(
-            [
-                DownBlock(
-                    in_channels=self.mid_channels[i],
-                    out_channels=self.mid_channels[i + 1],
-                    down_factor=self.scale_factor,
-                )
-                for i in range(len(self.mid_channels) - 1)
-            ]
-        )
+        self.downs = nn.ModuleList([
+            DownBlock(
+                in_channels=mid_channels[i],
+                out_channels=mid_channels[i + 1],
+                down_factor=scale_factor,
+            )
+            for i in range(len(mid_channels) - 1)
+        ])
 
         # Upsample
-        self.ups = nn.ModuleList(
-            [
-                UpBlock(
-                    in_channels=self.mid_channels[-i - 1],
-                    out_channels=self.mid_channels[-i - 2],
-                    n_blocks=self.n_blocks[i],
-                    up_factor=self.scale_factor,
-                )
-                for i in range(len(self.mid_channels) - 1)
-            ]
-        )
+        self.ups = nn.ModuleList([
+            UpBlock(
+                in_channels=mid_channels[-i - 1],
+                out_channels=mid_channels[-i - 2],
+                n_blocks=n_blocks[i],
+                up_factor=scale_factor,
+            )
+            for i in range(len(mid_channels) - 1)
+        ])
 
         self.out = nn.Sequential(
             nn.ReflectionPad2d(1),
-            nn.Conv2d(self.mid_channels[0], self.out_channels * 4, kernel_size=3),
-            nn.PixelShuffle(upscale_factor=2),
+            nn.Conv2d(mid_channels[0], out_channels * (cfa_size ** 2), kernel_size=3),
+            nn.PixelShuffle(upscale_factor=cfa_size),
         )
 
     def forward(self, x):
@@ -174,6 +163,7 @@ class LLIE(nn.Module):
 
 
 if __name__ == '__main__':
-    net = LLIE()
-    inp = torch.randn(1, 4, 256, 256)
+    cfa_size = 2
+    net = LLIE(cfa_size=cfa_size)
+    inp = torch.randn(1, cfa_size ** 2, 256, 256)
     print(net(inp).shape)

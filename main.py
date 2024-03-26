@@ -3,7 +3,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from model import LLIE
 from PIL import Image
 from pytorch_msssim import MS_SSIM
 from skimage.metrics import peak_signal_noise_ratio as compute_psnr
@@ -12,6 +11,8 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+from model import LLIE
 from utils import AverageMeter, SIDDataset, parse_args
 
 
@@ -66,11 +67,17 @@ if __name__ == '__main__':
     args = parse_args()
     device = torch.device('cpu') if args.cpu else torch.device('cuda')
 
+    train_fns, test_fns, cfa_size = {
+        'bayer': ('Sony_train.txt', 'Sony_test.txt', 2),
+        'xtrans': ('Fuji_train.txt', 'Fuji_test.txt', 3)
+    }[args.cfa]
+
     test_dataset = SIDDataset(
         args.data_path,
-        'Sony_test.txt',
+        test_fns,
+        cfa=args.cfa,
         augment=False,
-        pad_multiple_to=args.pad_multiple_to,
+        size_divisibility=args.size_divisibility,
         memorize=args.memorize,
     )
     test_loader = DataLoader(
@@ -83,7 +90,7 @@ if __name__ == '__main__':
 
     save_path = Path(args.save_path)
 
-    model = LLIE().to(device)
+    model = LLIE(cfa_size=cfa_size).to(device)
     if args.phase == 'test':
         model.load_state_dict(torch.load(args.ckpt, map_location=device))
         evaluate_model(model, test_loader, save_path, 'final')
@@ -94,7 +101,8 @@ if __name__ == '__main__':
         total_loss, total_num = 0.0, 0
         train_dataset = SIDDataset(
             args.data_path,
-            'Sony_train.txt',
+            train_fns,
+            cfa=args.cfa,
             patch_size=args.patch_size,
             augment=True,
             memorize=args.memorize,

@@ -194,7 +194,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='/data/SID/Sony/gt_srgb')
+    parser.add_argument('--data_dir', type=str, default='./dataset/SID/Sony/gt_srgb')
     parser.add_argument('--out_dir', type=str, default='det_results')
     parser.add_argument('--jsonfile_prefix', type=str)
     parser.add_argument('--score_thr', type=float, default=0)

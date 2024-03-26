@@ -7,7 +7,6 @@ from enum import Enum
 import numpy as np
 import rawpy
 import torch
-import torchvision.transforms.functional as T
 from torch.backends import cudnn
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -16,9 +15,15 @@ from tqdm import tqdm
 def parse_args():
     parser = argparse.ArgumentParser(description='Lightweight LLIE')
     parser.add_argument(
+        '--cfa',
+        type=str,
+        choices=['bayer', 'xtrans'],
+        default='bayer'
+    )
+    parser.add_argument(
         '--data_path',
         type=str,
-        default='/home/hjj/data/SID/Sony',
+        default='./dataset/SID/Sony',
         help='Path to dataset',
     )
     parser.add_argument(
@@ -48,7 +53,7 @@ def parse_args():
     parser.add_argument(
         '--seed', type=int, default=-1, help='random seed (-1 for no manual seed)'
     )
-    parser.add_argument('--pad_multiple_to', type=int, default=32)
+    parser.add_argument('--size_divisibility', type=int, default=32)
     parser.add_argument(
         '--memorize',
         default=True,
@@ -111,10 +116,10 @@ def pack_raw_bayer(raw):
 
     out = np.stack(
         (
-            img[R[0][0] : H : 2, R[1][0] : W : 2],  # RGBG
-            img[G1[0][0] : H : 2, G1[1][0] : W : 2],
-            img[B[0][0] : H : 2, B[1][0] : W : 2],
-            img[G2[0][0] : H : 2, G2[1][0] : W : 2],
+            img[R[0][0]: H: 2, R[1][0]: W: 2],  # RGBG
+            img[G1[0][0]: H: 2, G1[1][0]: W: 2],
+            img[B[0][0]: H: 2, B[1][0]: W: 2],
+            img[G2[0][0]: H: 2, G2[1][0]: W: 2],
         ),
         axis=0,
     ).astype(np.float32)
@@ -123,7 +128,54 @@ def pack_raw_bayer(raw):
 
     out = (out - black_level) / (white_point - black_level)
     out = np.clip(out, 0, 1)
+    return out
 
+
+def pack_raw_xtrans(raw):
+    # pack X-Trans image to 9 channels
+    im = raw.raw_image_visible.astype(np.float32)
+    im = (im - 1024) / (16383 - 1024)  # subtract the black level
+    im = np.clip(im, 0, 1)
+
+    img_shape = im.shape
+    H = (img_shape[0] // 6) * 6
+    W = (img_shape[1] // 6) * 6
+
+    out = np.zeros((9, H // 3, W // 3), dtype=np.float32)
+    # 0 R
+    out[0, 0::2, 0::2] = im[0:H:6, 0:W:6]
+    out[0, 0::2, 1::2] = im[0:H:6, 4:W:6]
+    out[0, 1::2, 0::2] = im[3:H:6, 1:W:6]
+    out[0, 1::2, 1::2] = im[3:H:6, 3:W:6]
+
+    # 1 G
+    out[1, 0::2, 0::2] = im[0:H:6, 2:W:6]
+    out[1, 0::2, 1::2] = im[0:H:6, 5:W:6]
+    out[1, 1::2, 0::2] = im[3:H:6, 2:W:6]
+    out[1, 1::2, 1::2] = im[3:H:6, 5:W:6]
+
+    # 1 B
+    out[2, 0::2, 0::2] = im[0:H:6, 1:W:6]
+    out[2, 0::2, 1::2] = im[0:H:6, 3:W:6]
+    out[2, 1::2, 0::2] = im[3:H:6, 0:W:6]
+    out[2, 1::2, 1::2] = im[3:H:6, 4:W:6]
+
+    # 4 R
+    out[3, 0::2, 0::2] = im[1:H:6, 2:W:6]
+    out[3, 0::2, 1::2] = im[2:H:6, 5:W:6]
+    out[3, 1::2, 0::2] = im[5:H:6, 2:W:6]
+    out[3, 1::2, 1::2] = im[4:H:6, 5:W:6]
+
+    # 5 B
+    out[4, 0::2, 0::2] = im[2:H:6, 2:W:6]
+    out[4, 0::2, 1::2] = im[1:H:6, 5:W:6]
+    out[4, 1::2, 0::2] = im[4:H:6, 2:W:6]
+    out[4, 1::2, 1::2] = im[5:H:6, 5:W:6]
+
+    out[5, :, :] = im[1:H:3, 0:W:3]
+    out[6, :, :] = im[1:H:3, 1:W:3]
+    out[7, :, :] = im[2:H:3, 0:W:3]
+    out[8, :, :] = im[2:H:3, 1:W:3]
     return out
 
 
@@ -132,22 +184,30 @@ class SIDDataset(Dataset):
         self,
         data_path,
         paired_fns,
+        cfa,
         augment=True,
         repeat=1,
         patch_size=512,
         memorize=True,
-        pad_multiple_to=32,
+        size_divisibility=32,
     ):
         super(SIDDataset, self).__init__()
 
-        self.datadir = data_path
+        self.data_dir = data_path
         self.paired_fns = read_paired_fns(paired_fns)
         self.augment = augment
         self.patch_size = patch_size
         self.repeat = repeat
-        self.pad_multiple_to = pad_multiple_to
+        self.size_divisibility = size_divisibility
 
-        self.pack_raw = pack_raw_bayer
+        if cfa == 'xtrans':
+            self.pack_raw = pack_raw_xtrans
+            self.cfa_size = 3
+        elif cfa == 'bayer':
+            self.pack_raw = pack_raw_bayer
+            self.cfa_size = 2
+        else:
+            raise NotImplementedError
 
         self.memorize = memorize
         self.target_dict = {}
@@ -163,8 +223,8 @@ class SIDDataset(Dataset):
         i = i % len(self.paired_fns)
         input_fn, target_fn = self.paired_fns[i]
 
-        input_path = osp.join(self.datadir, 'short', input_fn)
-        target_path = osp.join(self.datadir, 'long', target_fn)
+        input_path = osp.join(self.data_dir, 'short', input_fn)
+        target_path = osp.join(self.data_dir, 'long', target_fn)
 
         if self.memorize:
             if target_fn not in self.target_dict:
@@ -209,8 +269,12 @@ class SIDDataset(Dataset):
             xx = np.random.randint(0, W - ps)
             yy = np.random.randint(0, H - ps)
 
-            input = input_image[:, yy : yy + ps, xx : xx + ps]
-            target = target_image[:, 2 * yy : 2 * (yy + ps), 2 * xx : 2 * (xx + ps)]
+            input = input_image[:, yy: yy + ps, xx: xx + ps]
+            target = target_image[
+                :,
+                self.cfa_size * yy: self.cfa_size * (yy + ps),
+                self.cfa_size * xx: self.cfa_size * (xx + ps),
+            ]
 
             if np.random.randint(2, size=1)[0] == 1:  # horizontal flip
                 input = np.flip(input, axis=1)
@@ -223,12 +287,12 @@ class SIDDataset(Dataset):
                 target = np.transpose(target, (0, 2, 1))
         else:
             H, W = input_image.shape[-2:]
-            pad_multiple_to = self.pad_multiple_to
+            size_divisibility = self.size_divisibility
 
-            new_h = ((H + pad_multiple_to) // pad_multiple_to) * pad_multiple_to
-            new_w = ((W + pad_multiple_to) // pad_multiple_to) * pad_multiple_to
-            pad_h = new_h - H if H % pad_multiple_to != 0 else 0
-            pad_w = new_w - W if W % pad_multiple_to != 0 else 0
+            new_h = ((H + size_divisibility) // size_divisibility) * size_divisibility
+            new_w = ((W + size_divisibility) // size_divisibility) * size_divisibility
+            pad_h = new_h - H if H % size_divisibility != 0 else 0
+            pad_w = new_w - W if W % size_divisibility != 0 else 0
             input = np.pad(input_image, ((0, 0), (0, pad_h), (0, pad_w)), 'reflect')
             target = target_image
 
@@ -236,7 +300,6 @@ class SIDDataset(Dataset):
         target = target.copy()
 
         dic = {'input': input, 'target': target, 'fn': osp.splitext(input_fn)[0]}
-
         return dic
 
     def __len__(self):
@@ -271,20 +334,20 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
     def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
+        fmt_str = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
+        return fmt_str.format(**self.__dict__)
 
     def summary(self):
-        fmtstr = ''
+        fmt_str = ''
         if self.summary_type is self.Summary.NONE:
-            fmtstr = ''
+            fmt_str = ''
         elif self.summary_type is self.Summary.AVERAGE:
-            fmtstr = '{name} {avg:.3f}'
+            fmt_str = '{name} {avg:.3f}'
         elif self.summary_type is self.Summary.SUM:
-            fmtstr = '{name} {sum:.3f}'
+            fmt_str = '{name} {sum:.3f}'
         elif self.summary_type is self.Summary.COUNT:
-            fmtstr = '{name} {count:.3f}'
+            fmt_str = '{name} {count:.3f}'
         else:
             raise ValueError(f'invalid summary type {self.summary_type}')
 
-        return fmtstr.format(**self.__dict__)
+        return fmt_str.format(**self.__dict__)
