@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Install PyTorch (using torch 1.13.0 + cuda 11.6 here)
-conda install --yes pytorch torchvision pytorch-cuda=11.6 -c pytorch -c nvidia
+# [Optional] Install PyTorch (using torch 1.13.0 + cuda 11.6 here)
+# conda install --yes pytorch torchvision pytorch-cuda=11.6 -c pytorch -c nvidia
 
 # install mmcv-full
 pip install -U openmim
