@@ -95,3 +95,19 @@ We provide the pre-trained models and visual results.
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | SID-Sony | 29.35 | 0.7877 | 0.19 | 0.635 | 1.1791 / 0.0367 | 0.79 | [ckpt](https://drive.google.com/file/d/1swpobU3z33pCnmHmhiByaImU96t6tE2G/view?usp=share_link) | [images](https://drive.google.com/drive/folders/1ieiDUey1ogp46fReR6O86GazdljUMr9z?usp=share_link) |
 | SID-Fuji | 27.55 | 0.7118 | 0.23 | 0.637 | 1.1385 / 0.0342 | 0.88 | [ckpt](https://drive.google.com/file/d/1RMXcOiKe2TMQWUuVIXJ11yKm2ApkQOfN/view?usp=share_link) | [images](https://drive.google.com/drive/folders/1sh9yt2BvrFEKY9Xzeuec36vH4JF1pK2Y?usp=share_link) |
+
+## Citation
+
+If you find this repository useful, please consider citing:
+
+```bibtex
+@article{huang2024real,
+  title={Real-time Attentive Dilated U-Net for Extremely Dark Image Enhancement},
+  author={Huang, Junjian and Ren, Hao and Liu, Shulin and Liu, Yong and Lv, Chuanlu and Lu, Jiawen and Xie, Changyong and Lu, Hong},
+  journal={ACM Transactions on Multimedia Computing, Communications and Applications},
+  volume={20},
+  number={8},
+  pages={1--19},
+  year={2024}
+}
+```
